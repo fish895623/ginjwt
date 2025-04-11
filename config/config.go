@@ -24,10 +24,10 @@ func Load(logger *zap.Logger) (*Config, error) {
 	}
 
 	// Parse JWT expiry durations
-	accessExpiry, err := time.ParseDuration(getEnv("JWT_ACCESS_EXPIRY", "1m"))
+	accessExpiry, err := time.ParseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m"))
 	if err != nil {
 		logger.Error("Invalid JWT_ACCESS_EXPIRY", zap.Error(err))
-		accessExpiry = 1 * time.Minute // Default to 1 minute
+		accessExpiry = 15 * time.Minute // Default to 15 minutes
 	}
 
 	refreshExpiry, err := time.ParseDuration(getEnv("JWT_REFRESH_EXPIRY", "72h"))

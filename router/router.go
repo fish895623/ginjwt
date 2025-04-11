@@ -27,14 +27,16 @@ func SetupRouter(cfg *config.Config, logger *zap.Logger) *gin.Engine {
 
 	// Public routes
 	api := r.Group("/api")
-	// Health check endpoint
-	api.GET("/healthcheck", handlers.HealthCheck)
-
-	// Authentication routes
-	auth := api.Group("/auth")
 	{
-		auth.POST("/login", authHandler.Login)
-		auth.POST("/refresh", authHandler.RefreshToken)
+		// Health check endpoint
+		api.GET("/healthcheck", handlers.HealthCheck)
+
+		// Authentication routes
+		auth := api.Group("/auth")
+		{
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/refresh", authHandler.RefreshToken)
+		}
 	}
 
 	// Protected routes
