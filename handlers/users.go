@@ -11,9 +11,9 @@ import (
 
 // Mock data - in a real app, this would come from a database
 var users = []models.User{
-	{ID: "1", Username: "user1", Email: "user1@example.com"},
-	{ID: "2", Username: "user2", Email: "user2@example.com"},
-	{ID: "3", Username: "user3", Email: "user3@example.com"},
+	{ID: "1", Username: "user1", Email: "user1@example.com", Password: "password1"},
+	{ID: "2", Username: "user2", Email: "user2@example.com", Password: "password2"},
+	{ID: "3", Username: "user3", Email: "user3@example.com", Password: "password3"},
 }
 
 // GetUsers returns all users
