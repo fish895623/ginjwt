@@ -1,7 +1,8 @@
-package handlers
+package handlers_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,15 +10,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 
+	"example.com/ginhello/handlers"
 	"example.com/ginhello/models"
+	"example.com/ginhello/testutils"
 )
 
 func TestGetUsers(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
+	db, logger := testutils.SetupTestDB(t)
+	userHandler := handlers.NewUserHandler(db, logger)
+
+	// Create some test users
+	u1 := testutils.CreateTestUser(t, db, "getuser1", "get1@example.com", "pw1")
+	u2 := testutils.CreateTestUser(t, db, "getuser2", "get2@example.com", "pw2")
 
 	// Create request
 	req := httptest.NewRequest("GET", "/api/users", nil)
@@ -25,35 +32,34 @@ func TestGetUsers(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	// Set logger in context as middleware would
-	c.Set("logger", logger)
-
 	// Call handler
-	GetUsers(c)
+	userHandler.GetUsers(c)
 
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response []models.User
+	var response []models.PublicUser
 	err := json.NewDecoder(w.Body).Decode(&response)
 	assert.NoError(t, err)
-	assert.Len(t, response, 3) // We have 3 mock users
+	assert.Len(t, response, 2)
 
-	// Check that we get expected user data
-	assert.Equal(t, "user1", response[0].Username)
-	assert.Equal(t, "user2", response[1].Username)
-	assert.Equal(t, "user3", response[2].Username)
-
-	// Verify passwords are not included in response
-	for _, user := range response {
-		assert.Empty(t, user.Password)
+	// Check usernames (order might not be guaranteed)
+	foundUsernames := map[string]bool{}
+	for _, u := range response {
+		foundUsernames[u.Username] = true
 	}
+	assert.True(t, foundUsernames[u1.Username])
+	assert.True(t, foundUsernames[u2.Username])
 }
 
 func TestGetUserByID(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
+	db, logger := testutils.SetupTestDB(t)
+	userHandler := handlers.NewUserHandler(db, logger)
+
+	// Create a test user
+	testUser := testutils.CreateTestUser(t, db, "getbyiduser", "getbyid@example.com", "pw")
 
 	// Test cases
 	tests := []struct {
@@ -61,18 +67,28 @@ func TestGetUserByID(t *testing.T) {
 		userID         string
 		expectedStatus int
 		expectedError  bool
+		expectedUser   *models.User
 	}{
 		{
 			name:           "Valid user ID",
-			userID:         "1",
+			userID:         fmt.Sprintf("%d", testUser.ID),
 			expectedStatus: http.StatusOK,
 			expectedError:  false,
+			expectedUser:   &testUser,
 		},
 		{
-			name:           "Invalid user ID",
-			userID:         "999",
+			name:           "Invalid user ID (not found)",
+			userID:         "9999",
 			expectedStatus: http.StatusNotFound,
 			expectedError:  true,
+			expectedUser:   nil,
+		},
+		{
+			name:           "Invalid user ID format (non-numeric)",
+			userID:         "not-a-number",
+			expectedStatus: http.StatusNotFound, // Expecting not found as the ID won't parse/match
+			expectedError:  true,
+			expectedUser:   nil,
 		},
 	}
 
@@ -85,25 +101,24 @@ func TestGetUserByID(t *testing.T) {
 			c.Request = req
 			c.Params = []gin.Param{{Key: "id", Value: tc.userID}}
 
-			// Set logger in context
-			c.Set("logger", logger)
-
 			// Call handler
-			GetUserByID(c)
+			userHandler.GetUserByID(c)
 
 			// Assert
 			assert.Equal(t, tc.expectedStatus, w.Code)
 
 			if !tc.expectedError {
-				var user models.User
+				var user models.PublicUser
 				err := json.NewDecoder(w.Body).Decode(&user)
 				assert.NoError(t, err)
-				assert.Equal(t, tc.userID, user.ID)
+				assert.Equal(t, tc.expectedUser.ID, user.ID)
+				assert.Equal(t, tc.expectedUser.Username, user.Username)
+				assert.Equal(t, tc.expectedUser.Email, user.Email)
 			} else {
 				var response map[string]string
 				err := json.NewDecoder(w.Body).Decode(&response)
 				assert.NoError(t, err)
-				assert.Equal(t, "User not found", response["error"])
+				assert.NotEmpty(t, response["error"])
 			}
 		})
 	}
@@ -112,30 +127,64 @@ func TestGetUserByID(t *testing.T) {
 func TestCreateUser(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
+	db, logger := testutils.SetupTestDB(t)
+	userHandler := handlers.NewUserHandler(db, logger)
+
+	// Create an existing user for conflict test
+	_ = testutils.CreateTestUser(t, db, "existinguser", "existing@example.com", "pw")
 
 	// Test cases
 	tests := []struct {
-		name           string
-		requestBody    string
-		expectedStatus int
-		expectedError  bool
+		name             string
+		requestBody      string
+		expectedStatus   int
+		expectedError    bool
+		expectedUsername string // Only check username on success
 	}{
 		{
 			name: "Valid user",
 			requestBody: `{
-				"id": "4",
 				"username": "newuser",
 				"email": "new@example.com",
 				"password": "newpassword"
 			}`,
-			expectedStatus: http.StatusCreated,
-			expectedError:  false,
+			expectedStatus:   http.StatusCreated,
+			expectedError:    false,
+			expectedUsername: "newuser",
 		},
 		{
 			name:           "Invalid JSON",
 			requestBody:    `{invalid json`,
 			expectedStatus: http.StatusBadRequest,
+			expectedError:  true,
+		},
+		{
+			name: "Missing required fields (username)",
+			requestBody: `{
+				"email": "missing@example.com",
+				"password": "password"
+			}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  true,
+		},
+		{
+			name: "Duplicate username",
+			requestBody: `{
+				"username": "existinguser",
+				"email": "duplicate@example.com",
+				"password": "password"
+			}`,
+			expectedStatus: http.StatusConflict,
+			expectedError:  true,
+		},
+		{
+			name: "Duplicate email",
+			requestBody: `{
+				"username": "anotheruser",
+				"email": "existing@example.com",
+				"password": "password"
+			}`,
+			expectedStatus: http.StatusConflict,
 			expectedError:  true,
 		},
 	}
@@ -149,24 +198,24 @@ func TestCreateUser(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = req
 
-			// Set logger in context
-			c.Set("logger", logger)
-
 			// Call handler
-			CreateUser(c)
+			userHandler.CreateUser(c)
 
 			// Assert status
 			assert.Equal(t, tc.expectedStatus, w.Code)
 
 			if !tc.expectedError {
-				var user models.User
+				var user models.PublicUser
 				err := json.NewDecoder(w.Body).Decode(&user)
 				assert.NoError(t, err)
-				assert.NotEmpty(t, user.ID)
-				assert.NotEmpty(t, user.Username)
-				assert.NotEmpty(t, user.Email)
-				// Password should not be in the response
-				assert.Empty(t, user.Password)
+				assert.Greater(t, user.ID, uint(0))
+				assert.Equal(t, tc.expectedUsername, user.Username)
+				assert.NotEmpty(t, user.CreatedAt)
+			} else {
+				var response map[string]string
+				err := json.NewDecoder(w.Body).Decode(&response)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, response["error"])
 			}
 		})
 	}

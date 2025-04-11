@@ -9,6 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	DefaultJWTAccessExpiry  = 15 * time.Minute
+	DefaultJWTRefreshExpiry = 72 * time.Hour
+)
+
 // Config holds all configuration for the application
 type Config struct {
 	JWTSecret        string
@@ -35,13 +40,13 @@ func Load(logger *zap.Logger) (*Config, error) {
 	accessExpiry, err := time.ParseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m"))
 	if err != nil {
 		logger.Error("Invalid JWT_ACCESS_EXPIRY", zap.Error(err))
-		accessExpiry = 15 * time.Minute // Default to 15 minutes
+		accessExpiry = DefaultJWTAccessExpiry
 	}
 
 	refreshExpiry, err := time.ParseDuration(getEnv("JWT_REFRESH_EXPIRY", "72h"))
 	if err != nil {
 		logger.Error("Invalid JWT_REFRESH_EXPIRY", zap.Error(err))
-		refreshExpiry = 72 * time.Hour // Default to 72 hours
+		refreshExpiry = DefaultJWTRefreshExpiry
 	}
 
 	// Construct DSN

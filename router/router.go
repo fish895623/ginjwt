@@ -43,6 +43,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, logger *zap.Logger) *gin.Engin
 
 	// Protected routes
 	protected := api.Group("/")
+	protected.POST("/users", userHandler.CreateUser)
 	protected.Use(middleware.JWTAuthMiddleware(jwtService, logger))
 	{
 		// User endpoints
@@ -50,7 +51,6 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, logger *zap.Logger) *gin.Engin
 		{
 			users.GET("", userHandler.GetUsers)
 			users.GET("/:id", userHandler.GetUserByID)
-			users.POST("", userHandler.CreateUser)
 		}
 	}
 

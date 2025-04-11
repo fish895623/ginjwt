@@ -119,9 +119,3 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	h.logger.Info("Token refreshed successfully", zap.Uint("user_id", claims.UserID))
 	c.JSON(http.StatusOK, newTokens)
 }
-
-// HashPassword hashes a password using bcrypt
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
-}

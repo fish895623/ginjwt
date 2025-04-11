@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -54,17 +55,25 @@ func (h *UserHandler) GetUsers(c *gin.Context) {
 
 // GetUserByID returns a user by ID
 func (h *UserHandler) GetUserByID(c *gin.Context) {
-	id := c.Param("id")
-	h.logger.Info("Fetching user by ID", zap.String("id", id))
+	idStr := c.Param("id")
+	h.logger.Info("Fetching user by ID", zap.String("id", idStr))
+
+	// Validate that ID is numeric before querying DB
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		h.logger.Warn("Invalid user ID format", zap.String("id", idStr), zap.Error(err))
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
 
 	var user models.User
-	result := h.db.First(&user, id)
+	result := h.db.First(&user, uint(id))
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			h.logger.Warn("User not found", zap.String("id", id))
+			h.logger.Warn("User not found in DB", zap.Uint64("id", id))
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		} else {
-			h.logger.Error("Database error fetching user by ID", zap.String("id", id), zap.Error(result.Error))
+			h.logger.Error("Database error fetching user by ID", zap.Uint64("id", id), zap.Error(result.Error))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		}
 		return
@@ -115,8 +124,9 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	// Save to database
 	result := h.db.Create(&newUser)
 	if result.Error != nil {
-		// Check for unique constraint violation
-		if strings.Contains(result.Error.Error(), "duplicate key value violates unique constraint") {
+		// Check for unique constraint violation (adjust error message check for broader compatibility)
+		errMsg := strings.ToLower(result.Error.Error())
+		if strings.Contains(errMsg, "unique constraint") || strings.Contains(errMsg, "duplicate key value") {
 			h.logger.Warn("Attempted to create user with existing username or email", zap.String("username", req.Username), zap.String("email", req.Email))
 			c.JSON(http.StatusConflict, gin.H{"error": "Username or email already exists"})
 		} else {

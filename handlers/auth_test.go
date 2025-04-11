@@ -1,4 +1,4 @@
-package handlers
+package handlers_test
 
 import (
 	"bytes"
@@ -6,28 +6,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 
 	"example.com/ginhello/auth"
-	"example.com/ginhello/config"
+	"example.com/ginhello/handlers"
+
+	// "example.com/ginhello/models" // Removed as not directly used here
+	"example.com/ginhello/testutils"
 )
 
 func TestAuthHandler_Login(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
-	cfg := &config.Config{
-		JWTSecret:        "test_secret",
-		JWTAccessExpiry:  15 * time.Minute,
-		JWTRefreshExpiry: 24 * time.Hour,
-		JWTIssuer:        "test_issuer",
-	}
+	db, logger := testutils.SetupTestDB(t)
+	cfg := testutils.SetupTestConfig(t)
 	jwtService := auth.NewJWTService(cfg, logger)
-	authHandler := NewAuthHandler(jwtService, logger)
+	authHandler := handlers.NewAuthHandler(jwtService, db, logger)
+
+	// Create a test user
+	testUser := testutils.CreateTestUser(t, db, "loginuser", "login@example.com", "password123")
 
 	// Test cases
 	tests := []struct {
@@ -39,8 +38,8 @@ func TestAuthHandler_Login(t *testing.T) {
 		{
 			name: "Valid login",
 			requestBody: map[string]interface{}{
-				"username": "user1",
-				"password": "password1",
+				"username": testUser.Username,
+				"password": "password123",
 			},
 			expectedStatus: http.StatusOK,
 			expectedError:  false,
@@ -49,7 +48,7 @@ func TestAuthHandler_Login(t *testing.T) {
 			name: "Invalid username",
 			requestBody: map[string]interface{}{
 				"username": "nonexistent",
-				"password": "password1",
+				"password": "password123",
 			},
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  true,
@@ -57,8 +56,8 @@ func TestAuthHandler_Login(t *testing.T) {
 		{
 			name: "Invalid password",
 			requestBody: map[string]interface{}{
-				"username": "user1",
-				"password": "wrong",
+				"username": testUser.Username,
+				"password": "wrongpassword",
 			},
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  true,
@@ -66,7 +65,7 @@ func TestAuthHandler_Login(t *testing.T) {
 		{
 			name: "Missing username",
 			requestBody: map[string]interface{}{
-				"password": "password1",
+				"password": "password123",
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  true,
@@ -74,7 +73,7 @@ func TestAuthHandler_Login(t *testing.T) {
 		{
 			name: "Missing password",
 			requestBody: map[string]interface{}{
-				"username": "user1",
+				"username": testUser.Username,
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  true,
@@ -119,19 +118,14 @@ func TestAuthHandler_Login(t *testing.T) {
 func TestAuthHandler_RefreshToken(t *testing.T) {
 	// Setup
 	gin.SetMode(gin.TestMode)
-	logger := zap.NewNop()
-	cfg := &config.Config{
-		JWTSecret:        "test_secret",
-		JWTAccessExpiry:  15 * time.Minute,
-		JWTRefreshExpiry: 24 * time.Hour,
-		JWTIssuer:        "test_issuer",
-	}
+	db, logger := testutils.SetupTestDB(t)
+	cfg := testutils.SetupTestConfig(t)
 	jwtService := auth.NewJWTService(cfg, logger)
-	authHandler := NewAuthHandler(jwtService, logger)
+	authHandler := handlers.NewAuthHandler(jwtService, db, logger)
 
-	// Generate a valid refresh token
-	user := users[0] // using the mock user from handlers/users.go
-	tokenPair, _ := jwtService.GenerateTokenPair(&user)
+	// Create a test user and generate a refresh token
+	testUser := testutils.CreateTestUser(t, db, "refreshuser", "refresh@example.com", "password123")
+	tokenPair, _ := jwtService.GenerateTokenPair(&testUser)
 
 	// Test cases
 	tests := []struct {
@@ -160,6 +154,18 @@ func TestAuthHandler_RefreshToken(t *testing.T) {
 			name:           "Missing refresh token",
 			requestBody:    map[string]interface{}{},
 			expectedStatus: http.StatusBadRequest,
+			expectedError:  true,
+		},
+		{
+			name: "Refresh token for non-existent user",
+			// Generate token first, then delete user
+			requestBody: func() map[string]interface{} {
+				tempUser := testutils.CreateTestUser(t, db, "tempuser", "temp@example.com", "pw")
+				tempTokenPair, _ := jwtService.GenerateTokenPair(&tempUser)
+				db.Delete(&tempUser)
+				return map[string]interface{}{"refresh_token": tempTokenPair.RefreshToken}
+			}(),
+			expectedStatus: http.StatusUnauthorized,
 			expectedError:  true,
 		},
 	}

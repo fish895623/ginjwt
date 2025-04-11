@@ -2,6 +2,7 @@ package database
 
 import (
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -28,4 +29,10 @@ func Connect(cfg *config.Config, logger *zap.Logger) (*gorm.DB, error) {
 
 	logger.Info("Database schema migrated successfully")
 	return db, nil
+}
+
+// HashPassword hashes a password using bcrypt (moved from handlers)
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
 }
