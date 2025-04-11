@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
@@ -26,6 +27,9 @@ func SetupRouter(cfg *config.Config, db *gorm.DB, logger *zap.Logger) *gin.Engin
 	r := gin.New()
 	r.Use(middleware.ZapLogger(logger))
 	r.Use(gin.Recovery())
+
+	// Add Prometheus metrics endpoint
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Public routes
 	api := r.Group("/api")
