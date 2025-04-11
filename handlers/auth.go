@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"example.com/ginhello/auth"
 	"example.com/ginhello/models"
@@ -25,14 +26,15 @@ type RefreshRequest struct {
 // AuthHandler handles authentication endpoints
 type AuthHandler struct {
 	jwtService *auth.JWTService
+	db         *gorm.DB
 	logger     *zap.Logger
-	// In a real app, would have userService or userRepository to get users
 }
 
 // NewAuthHandler creates a new auth handler
-func NewAuthHandler(jwtService *auth.JWTService, logger *zap.Logger) *AuthHandler {
+func NewAuthHandler(jwtService *auth.JWTService, db *gorm.DB, logger *zap.Logger) *AuthHandler {
 	return &AuthHandler{
 		jwtService: jwtService,
+		db:         db,
 		logger:     logger,
 	}
 }
@@ -46,34 +48,30 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// In a real app, would get user from database
-	// For this example, we're using mock users
-	var foundUser *models.User
-	for _, user := range users {
-		if user.Username == req.Username {
-			foundUser = &user
-			break
+	// Find user by username
+	var foundUser models.User
+	result := h.db.Where("username = ?", req.Username).First(&foundUser)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			h.logger.Warn("Login attempt with non-existent user", zap.String("username", req.Username))
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		} else {
+			h.logger.Error("Database error during login", zap.Error(result.Error))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		}
-	}
-
-	if foundUser == nil {
-		h.logger.Warn("Login attempt with non-existent user", zap.String("username", req.Username))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	// In a real app, would check password hash
-	// For this example, mock users have plaintext passwords
-	// compareErr := bcrypt.CompareHashAndPassword([]byte(foundUser.Password), []byte(req.Password))
-	// if compareErr != nil {
-	if foundUser.Password != req.Password {
-		h.logger.Warn("Failed login attempt", zap.String("username", req.Username))
+	// Compare password hash
+	compareErr := bcrypt.CompareHashAndPassword([]byte(foundUser.Password), []byte(req.Password))
+	if compareErr != nil {
+		h.logger.Warn("Failed login attempt (wrong password)", zap.String("username", req.Username))
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
 	// Generate tokens
-	tokens, err := h.jwtService.GenerateTokenPair(foundUser)
+	tokens, err := h.jwtService.GenerateTokenPair(&foundUser)
 	if err != nil {
 		h.logger.Error("Failed to generate tokens", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
@@ -93,16 +91,33 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	// Generate new tokens
-	tokens, err := h.jwtService.RefreshTokens(req.RefreshToken)
+	// Validate refresh token and get claims
+	claims, err := h.jwtService.ValidateToken(req.RefreshToken)
 	if err != nil {
-		h.logger.Error("Failed to refresh tokens", zap.Error(err))
+		h.logger.Warn("Invalid refresh token received", zap.Error(err))
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
 
-	h.logger.Info("Token refreshed successfully")
-	c.JSON(http.StatusOK, tokens)
+	// Fetch user from DB to ensure they still exist
+	var user models.User
+	result := h.db.First(&user, claims.UserID)
+	if result.Error != nil {
+		h.logger.Error("User for refresh token not found in DB", zap.Uint("user_id", claims.UserID))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User associated with token not found"})
+		return
+	}
+
+	// Generate new tokens using the user data from the DB
+	newTokens, err := h.jwtService.GenerateTokenPair(&user)
+	if err != nil {
+		h.logger.Error("Failed to refresh tokens", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh tokens"})
+		return
+	}
+
+	h.logger.Info("Token refreshed successfully", zap.Uint("user_id", claims.UserID))
+	c.JSON(http.StatusOK, newTokens)
 }
 
 // HashPassword hashes a password using bcrypt

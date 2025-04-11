@@ -4,6 +4,7 @@ import (
 	"go.uber.org/zap"
 
 	"example.com/ginhello/config"
+	"example.com/ginhello/database"
 	"example.com/ginhello/router"
 )
 
@@ -18,8 +19,15 @@ func main() {
 		logger.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
-	// Setup router with all routes and middleware
-	r := router.SetupRouter(cfg, logger)
+	// Connect to database
+	db, err := database.Connect(cfg, logger)
+	if err != nil {
+		// Error is already logged in Connect
+		return
+	}
+
+	// Inject DB connection into router setup
+	r := router.SetupRouter(cfg, db, logger)
 
 	// Start server
 	logger.Info("Starting server on :8080")

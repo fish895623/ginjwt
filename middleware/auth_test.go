@@ -30,10 +30,11 @@ func TestJWTAuthMiddleware(t *testing.T) {
 
 	// Create test user and generate token
 	user := &models.User{
-		ID:       "123",
+		// ID is set automatically by GORM
 		Username: "testuser",
 		Email:    "test@example.com",
 	}
+	user.ID = 123 // Manually set ID for testing
 	tokenPair, _ := jwtService.GenerateTokenPair(user)
 
 	// Test cases

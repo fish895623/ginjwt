@@ -3,6 +3,7 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 
 	"example.com/ginhello/auth"
 	"example.com/ginhello/config"
@@ -11,15 +12,16 @@ import (
 )
 
 // SetupRouter configures the Gin router with all routes and middleware
-func SetupRouter(cfg *config.Config, logger *zap.Logger) *gin.Engine {
+func SetupRouter(cfg *config.Config, db *gorm.DB, logger *zap.Logger) *gin.Engine {
 	// Set Gin to release mode
 	gin.SetMode(gin.ReleaseMode)
 
 	// Initialize JWT service
 	jwtService := auth.NewJWTService(cfg, logger)
 
-	// Initialize auth handler
-	authHandler := handlers.NewAuthHandler(jwtService, logger)
+	// Initialize handlers with DB dependency
+	authHandler := handlers.NewAuthHandler(jwtService, db, logger)
+	userHandler := handlers.NewUserHandler(db, logger)
 
 	r := gin.New()
 	r.Use(middleware.ZapLogger(logger))
@@ -46,9 +48,9 @@ func SetupRouter(cfg *config.Config, logger *zap.Logger) *gin.Engine {
 		// User endpoints
 		users := protected.Group("/users")
 		{
-			users.GET("", handlers.GetUsers)
-			users.GET("/:id", handlers.GetUserByID)
-			users.POST("", handlers.CreateUser)
+			users.GET("", userHandler.GetUsers)
+			users.GET("/:id", userHandler.GetUserByID)
+			users.POST("", userHandler.CreateUser)
 		}
 	}
 

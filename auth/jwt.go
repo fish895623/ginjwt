@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -26,7 +27,7 @@ type TokenPair struct {
 
 // TokenClaims contains the claims for JWT
 type TokenClaims struct {
-	UserID   string `json:"user_id"`
+	UserID   uint   `json:"user_id"`
 	Username string `json:"username"`
 	TokenID  string `json:"token_id"` // Used for tracking refresh tokens
 	jwt.RegisteredClaims
@@ -112,9 +113,9 @@ func (s *JWTService) RefreshTokens(refreshToken string) (*TokenPair, error) {
 
 	// Create user object for token generation
 	user := &models.User{
-		ID:       claims.UserID,
 		Username: claims.Username,
 	}
+	user.ID = claims.UserID // Set the ID separately
 
 	// Generate new token pair with a new token ID
 	return s.GenerateTokenPair(user)
@@ -135,7 +136,7 @@ func (s *JWTService) generateToken(user *models.User, tokenID string, expiry tim
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    s.config.JWTIssuer,
-			Subject:   user.ID,
+			Subject:   fmt.Sprintf("%d", user.ID), // Subject should be string
 		},
 	}
 

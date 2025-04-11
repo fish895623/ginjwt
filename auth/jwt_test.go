@@ -22,10 +22,10 @@ func TestJWTService_GenerateTokenPair(t *testing.T) {
 	}
 	jwtService := NewJWTService(cfg, logger)
 	user := &models.User{
-		ID:       "123",
 		Username: "testuser",
 		Email:    "test@example.com",
 	}
+	user.ID = 123 // Set ID manually for testing
 
 	// Test
 	tokenPair, err := jwtService.GenerateTokenPair(user)
@@ -48,10 +48,10 @@ func TestJWTService_ValidateToken(t *testing.T) {
 	}
 	jwtService := NewJWTService(cfg, logger)
 	user := &models.User{
-		ID:       "123",
 		Username: "testuser",
 		Email:    "test@example.com",
 	}
+	user.ID = 123 // Set ID manually for testing
 
 	// Generate token
 	tokenPair, err := jwtService.GenerateTokenPair(user)
@@ -88,10 +88,10 @@ func TestJWTService_RefreshTokens(t *testing.T) {
 	}
 	jwtService := NewJWTService(cfg, logger)
 	user := &models.User{
-		ID:       "123",
 		Username: "testuser",
 		Email:    "test@example.com",
 	}
+	user.ID = 123 // Set ID manually for testing
 
 	// Generate initial tokens
 	tokenPair, err := jwtService.GenerateTokenPair(user)

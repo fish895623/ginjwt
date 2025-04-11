@@ -2,60 +2,138 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"example.com/ginhello/models"
 )
 
-// Mock data - in a real app, this would come from a database
-var users = []models.User{
-	{ID: "1", Username: "user1", Email: "user1@example.com", Password: "password1"},
-	{ID: "2", Username: "user2", Email: "user2@example.com", Password: "password2"},
-	{ID: "3", Username: "user3", Email: "user3@example.com", Password: "password3"},
+// UserHandler handles user-related requests
+type UserHandler struct {
+	db     *gorm.DB
+	logger *zap.Logger
+}
+
+// NewUserHandler creates a new UserHandler
+func NewUserHandler(db *gorm.DB, logger *zap.Logger) *UserHandler {
+	return &UserHandler{
+		db:     db,
+		logger: logger,
+	}
 }
 
 // GetUsers returns all users
-func GetUsers(c *gin.Context) {
-	l, _ := c.Get("logger")
-	logger := l.(*zap.Logger)
-	logger.Info("Fetching all users")
+func (h *UserHandler) GetUsers(c *gin.Context) {
+	h.logger.Info("Fetching all users")
 
-	c.JSON(http.StatusOK, users)
-}
+	var users []models.User
+	result := h.db.Find(&users)
+	if result.Error != nil {
+		h.logger.Error("Database error fetching users", zap.Error(result.Error))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
 
-// GetUserByID returns a user by ID
-func GetUserByID(c *gin.Context) {
-	id := c.Param("id")
-	l, _ := c.Get("logger")
-	logger := l.(*zap.Logger)
-	logger.Info("Fetching user by ID", zap.String("id", id))
-
-	for _, user := range users {
-		if user.ID == id {
-			c.JSON(http.StatusOK, user)
-			return
+	// Convert to public representation
+	publicUsers := make([]models.PublicUser, len(users))
+	for i, user := range users {
+		publicUsers[i] = models.PublicUser{
+			ID:        user.ID,
+			Username:  user.Username,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		}
 	}
 
-	logger.Warn("User not found", zap.String("id", id))
-	c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+	c.JSON(http.StatusOK, publicUsers)
+}
+
+// GetUserByID returns a user by ID
+func (h *UserHandler) GetUserByID(c *gin.Context) {
+	id := c.Param("id")
+	h.logger.Info("Fetching user by ID", zap.String("id", id))
+
+	var user models.User
+	result := h.db.First(&user, id)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			h.logger.Warn("User not found", zap.String("id", id))
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		} else {
+			h.logger.Error("Database error fetching user by ID", zap.String("id", id), zap.Error(result.Error))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Convert to public representation
+	publicUser := models.PublicUser{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+
+	c.JSON(http.StatusOK, publicUser)
+}
+
+// CreateUserRequest represents the body for creating a user
+type CreateUserRequest struct {
+	Username string `json:"username" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
 }
 
 // CreateUser creates a new user
-func CreateUser(c *gin.Context) {
-	l, _ := c.Get("logger")
-	logger := l.(*zap.Logger)
-
-	var newUser models.User
-	if err := c.ShouldBindJSON(&newUser); err != nil {
-		logger.Error("Invalid user data", zap.Error(err))
+func (h *UserHandler) CreateUser(c *gin.Context) {
+	var req CreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid user creation request", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// In a real app, we would save to database here
-	logger.Info("Created new user", zap.String("username", newUser.Username))
-	c.JSON(http.StatusCreated, newUser)
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		h.logger.Error("Failed to hash password", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
+		return
+	}
+
+	// Create user model
+	newUser := models.User{
+		Username: req.Username,
+		Email:    req.Email,
+		Password: string(hashedPassword),
+	}
+
+	// Save to database
+	result := h.db.Create(&newUser)
+	if result.Error != nil {
+		// Check for unique constraint violation
+		if strings.Contains(result.Error.Error(), "duplicate key value violates unique constraint") {
+			h.logger.Warn("Attempted to create user with existing username or email", zap.String("username", req.Username), zap.String("email", req.Email))
+			c.JSON(http.StatusConflict, gin.H{"error": "Username or email already exists"})
+		} else {
+			h.logger.Error("Failed to create user in database", zap.Error(result.Error))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		}
+		return
+	}
+
+	h.logger.Info("Created new user", zap.String("username", newUser.Username), zap.Uint("user_id", newUser.ID))
+
+	// Convert to public representation
+	publicUser := models.PublicUser{
+		ID:        newUser.ID,
+		Username:  newUser.Username,
+		Email:     newUser.Email,
+		CreatedAt: newUser.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	c.JSON(http.StatusCreated, publicUser)
 }

@@ -46,7 +46,7 @@ func JWTAuthMiddleware(jwtService *auth.JWTService, logger *zap.Logger) gin.Hand
 
 		// Add info to logger
 		logger.With(
-			zap.String("user_id", claims.UserID),
+			zap.Uint("user_id", claims.UserID),
 			zap.String("username", claims.Username),
 		)
 
